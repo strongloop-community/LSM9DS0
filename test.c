@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include <math.h>
 #include <inttypes.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <bson.h>
+#include <mongoc.h>
+#include <MQTTClient.h>
+
 
 #include "edison-9dof-i2c.h"
 
@@ -36,6 +42,17 @@ uint8_t print_byte;
 #define GYRO_DRIFT M_PI * (0.0f / 180.0f)  // rad/s/s
 #define MADGWICK_BETA sqrt(3.0f / 4.0f) * GYRO_ERROR
 
+// MQTT 
+
+#define MQ_ADDR "tcp://localhost:1883"
+#define MQ_ID "Edison"
+#define MQ_PITCH_TOPIC "edison/pitch"
+#define MQ_ROLL_TOPIC "edison/roll"
+#define MQ_YAW_TOPIC "edison/yaw"
+#define MQ_TEMP_TOPIC "edison/temperature"
+#define MQ_QOS 1
+#define MQ_TIMEOUT 10000L
+
 
 typedef struct {
     float x;
@@ -49,12 +66,34 @@ static struct option long_options[] = {
   {"dump",        no_argument,       0, 'u' },
   {"help",        no_argument,       0, 'h' },
   {"mode",        required_argument, 0, 'm' },
+  {"output",      required_argument, 0, 'o' },
+  {"pitch",       no_argument,       0, 'p' },
+  {"roll",        no_argument,       0, 'r' },
+  {"yaw",         no_argument,       0, 'y' },
+  {"gyro",        no_argument,       0, 'g' },
+  {"magnetometer", no_argument,       0, 'm' },
+  {"accelerometer", no_argument,      0, 'a' },
+  {"sleepTime",    required_argument, 0, 't'},
 };
 
 typedef enum {
   OPTION_MODE_SENSOR,
   OPTION_MODE_ANGLES,
+  OPTION_MODE_PITCH,
+  OPTION_MODE_ROLL,
+  OPTION_MODE_YAW,
+  OPTION_MODE_GYRO,
+  OPTION_MODE_MAG,
+  OPTION_MODE_ACC,
+  OPTION_MODE_TXT,
+  OPTION_MODE_JSON,
+  OPTION_MODE_COUCH,
+  OPTION_MODE_MONGO,
+  OPTION_MODE_MQTT,
+  OPTION_MODE_NORMAL,
 } OptionMode;
+
+OptionMode print_mode = OPTION_MODE_NORMAL;
 
 void dump_config_registers (int file)
 {
@@ -282,17 +321,17 @@ int read_bias_files (Triplet *a_bias, Triplet *g_bias, Triplet *m_bias, FTriplet
                a_str, &a_bias->x, &a_bias->y, &a_bias->z) != 4 ||
         strcmp (g_str, "g_bias") != 0 ||
         strcmp (a_str, "a_bias") != 0) {
-      printf ("Bias file "ACC_GYRO_BIAS_FILENAME" is malformed\n");
+      if(print_mode == OPTION_MODE_NORMAL) printf ("Bias file "ACC_GYRO_BIAS_FILENAME" is malformed\n");
       fclose (input);
       return 0;
     } else {
-      printf ("Loaded bias file G: %d %d %d, A: %d %d %d\n",
+      if(print_mode == OPTION_MODE_NORMAL) printf ("Loaded bias file G: %d %d %d, A: %d %d %d\n",
               g_bias->x, g_bias->y, g_bias->z,
               a_bias->x, a_bias->y, a_bias->z);
     }
     fclose (input);
   } else {
-    printf ("Bias file "ACC_GYRO_BIAS_FILENAME" not found.\n");
+    if(print_mode == OPTION_MODE_NORMAL) printf ("Bias file "ACC_GYRO_BIAS_FILENAME" not found.\n");
   }
 
   input = fopen(MAG_BIAS_FILENAME, "r");
@@ -303,20 +342,41 @@ int read_bias_files (Triplet *a_bias, Triplet *g_bias, Triplet *m_bias, FTriplet
                m_scale_str, &m_scale->x, &m_scale->y, &m_scale->z) != 4 ||
         strcmp (m_str, "m_bias") != 0 ||
         strcmp (m_scale_str, "m_scale") != 0) {
-      printf ("Bias file "MAG_BIAS_FILENAME" is malformed\n");
+      if(print_mode == OPTION_MODE_NORMAL) printf ("Bias file "MAG_BIAS_FILENAME" is malformed\n");
       fclose (input);
       return 0;
     } else {
-      printf ("Loaded bias file M(bias): %d %d %d, M(scale): %4f %4f %4f\n",
+      if(print_mode == OPTION_MODE_NORMAL) printf ("Loaded bias file M(bias): %d %d %d, M(scale): %4f %4f %4f\n",
               m_bias->x, m_bias->y, m_bias->z,
               m_scale->x, m_scale->y, m_scale->z);
     }
     fclose (input);
   } else {
-    printf ("Bias file "MAG_BIAS_FILENAME" not found.\n");
+    if(print_mode == OPTION_MODE_NORMAL) printf ("Bias file "MAG_BIAS_FILENAME" not found.\n");
   }
 
   return 1;
+}
+
+void mkfifo_at(char *dir_path, char *relative_path)
+{
+    int dir_fd;
+    int error;
+ 
+    dir_fd = open(dir_path, O_RDONLY);
+    if (dir_fd < 0) {
+        perror("open");
+        exit(EXIT_FAILURE);
+    }
+ 
+    umask(0077);
+    error = mkfifoat(dir_fd, relative_path, 0666);
+    if (error != 0) {
+        perror("mkfifoat");
+        exit(EXIT_FAILURE);
+    }
+ 
+    close(dir_fd);
 }
 
 int main (int argc, char **argv)
@@ -329,8 +389,39 @@ int main (int argc, char **argv)
   int opt, option_index, help = 0, option_dump = 0;
   OptionMode option_mode = OPTION_MODE_ANGLES;
   float declination = 0.0;
+  int sleep_time = 10000;
 
-  while ((opt = getopt_long(argc, argv, "d:hm:u",
+// Mongo DB
+  mongoc_client_t *client;
+  mongoc_collection_t *collection;
+  bson_error_t error;
+  bson_t *doc;
+  char json[100];
+
+//MQTT
+  MQTTClient mqClient;
+  MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+  MQTTClient_message pubmessage = MQTTClient_message_initializer;
+  MQTTClient_deliveryToken token;
+  int rc;
+  char tmp_msg[40];
+
+
+  unlink("/tmp/gyro");
+  unlink("/tmp/pitch");
+  unlink("/tmp/roll");
+  unlink("/tmp/yaw");
+  unlink("/tmp/mag");
+  unlink("/tmp/accel");
+  mkfifo_at("/tmp", "gyro");
+  mkfifo_at("/tmp", "pitch");
+  mkfifo_at("/tmp", "roll");
+  mkfifo_at("/tmp", "yaw");
+  mkfifo_at("/tmp", "mag");
+  mkfifo_at("/tmp", "accel");
+  
+
+  while ((opt = getopt_long(argc, argv, "d:hmp:u",
                             long_options, &option_index )) != -1) {
     switch (opt) {
       case 'd' :
@@ -344,18 +435,44 @@ int main (int argc, char **argv)
         else
           help = 1;
         break;
+      case 'o':
+        if(strcmp(optarg, "mongo") == 0)
+           print_mode = OPTION_MODE_MONGO;
+        else if(strcmp(optarg, "couch") == 0)
+           print_mode = OPTION_MODE_COUCH;
+        else if(strcmp(optarg, "text") == 0)
+           print_mode = OPTION_MODE_TXT;
+        else if(strcmp(optarg, "json") == 0)
+	   print_mode = OPTION_MODE_JSON;
+        else if(strcmp(optarg, "mqtt") == 0)
+           print_mode = OPTION_MODE_MQTT;
+        else if (strcmp(optarg, "normal") == 0)
+           print_mode = OPTION_MODE_NORMAL;
+        else
+           help = 1;
+        break; 
       case 'u' :
         option_dump = 1;
         break;
+      case 't' :
+	sleep_time = atoi(optarg) * 1000;
+	printf("Interval between readings will be: %d seconds.\n", atoi(optarg));
+	break;
       default:
         help = 1;
         break;
     }
   }
 
+ 
+
   if (help || argv[optind] != NULL) {
-      printf ("%s [--mode <sensor|angles>] [--dump]\n", argv[0]);
+      printf ("%s [--mode <sensor|angles>] [--output <mongo|couch|text|mqtt|json|normal>] [--sleepTime <seconds>] [--dump]\n", argv[0]);
       return 0;
+  }
+
+  if(print_mode == OPTION_MODE_MONGO){
+
   }
 
   if (!read_bias_files (&a_bias, &g_bias, &m_bias, &m_scale))
@@ -374,35 +491,151 @@ int main (int argc, char **argv)
   init_mag(file, MAG_SCALE_2GS);
   init_acc(file, ACCEL_SCALE_2G);
 
+  // int gpipe = open ("/tmp/gyro", O_WRONLY);
+  // FILE *gyro_pipe = fdopen(gpipe, "+w");
+  // printf("Gyro Pipe opened ... \n");
+
   // temperature is a 12-bit value: cut out 4 highest bits
   read_bytes (file, XM_ADDRESS, OUT_TEMP_L_XM, &data[0], 2);
   temp = (((data[1] & 0x0f) << 8) | data[0]);
-  printf ("Temperature: %d\n", temp);
-  printf ("Temperature: %d\n", temp);
+  if(print_mode == OPTION_MODE_NORMAL)
+	printf ("Temperature: %d\n", temp);
 
+  if(print_mode == OPTION_MODE_MQTT){
+	MQTTClient_create(&mqClient, MQ_ADDR, MQ_ID,
+        MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    	conn_opts.keepAliveInterval = 20;
+    	conn_opts.cleansession = 1;
+	if ((rc = MQTTClient_connect(mqClient, &conn_opts)) != MQTTCLIENT_SUCCESS) {
+       		printf("Failed to connect, return code %d\n", rc);
+       		exit(-1);
+ 	}
+}
+  if (option_mode == OPTION_MODE_SENSOR) {
+    if(print_mode == OPTION_MODE_NORMAL) printf ("  Gyroscope (deg/s)  | Magnetometer (mGs)  |   Accelerometer (mG)\n");
+  } else {
+    if(print_mode == OPTION_MODE_NORMAL) printf ("      Rotations (mag + acc):\n");
+  }
 
-  if (option_mode == OPTION_MODE_SENSOR)
-    printf ("  Gyroscope (deg/s)  | Magnetometer (mGs)  |   Accelerometer (mG)\n");
-  else
-    printf ("      Rotations (mag + acc):\n");
-
+  FTriplet angles2;
   while (1) {
     FTriplet gyro, mag, acc, angles1;
 
-    usleep (500000);
+    usleep (sleep_time * 1000);
 
     read_gyro (file, g_bias, GYRO_SCALE_245DPS, &gyro);
     read_mag (file, m_bias, m_scale, MAG_SCALE_2GS, &mag);
     read_acc (file, a_bias, ACCEL_SCALE_2G, &acc);
+    read_bytes (file, XM_ADDRESS, OUT_TEMP_L_XM, &data[0], 2);
+    temp = (((data[1] & 0x0f) << 8) | data[0]);
 
     if (option_mode == OPTION_MODE_SENSOR) {
       printf ("gyro: %4.0f %4.0f %4.0f | ", gyro.x, gyro.y, gyro.z);
+      // fprintf(gyro_pipe, "PIPE OUTPUT: \n");
+     // fprintf(gyro_pipe, "gyro:  %4.0f %4.0f %4.0f\n", gyro.x, gyro.y, gyro.z);
+     // fflush(gyro_pipe);
+      // write(gyro_pipe, gyro_msg, strlen(gyro_msg) + 1);
       printf ("mag: %4.0f %4.0f %4.0f | ", mag.x*1000, mag.y*1000, mag.z*1000);
       printf ("acc: %4.0f %4.0f %5.0f\n", acc.x*1000, acc.y*1000, acc.z*1000);
     } else {
       calculate_simple_angles (mag, acc, declination, &angles1);
-      printf ("pitch: %4.0f, roll: %4.0f, yaw: %4.0f\n",
-              angles1.x, angles1.y, angles1.z);
+      if(angles1.x != angles2.x || angles1.y != angles2.y || angles1.z != angles2.z){
+          time_t t = time(NULL);
+	  switch(print_mode) {
+	     case OPTION_MODE_NORMAL :
+                printf ("temp: %4d, pitch: %4.0f, roll: %4.0f, yaw: %4.0f\n",
+                  temp, angles1.x, angles1.y, angles1.z);
+                break;
+	     case OPTION_MODE_TXT :
+	        printf("%d; %d; %0.0f; %0.0f; %0.0f",  t, temp, angles1.x, angles1.y, angles1.x);
+	        fflush(stdout);
+		break;	
+	     case OPTION_MODE_JSON :
+                printf("{\"id\": \"%d\",\"temp\": \"%d\",pitch\": \"%0.0f\",\"roll\": \"%0.0f\",\"yaw\": \"%0.0f\"}", t, temp, angles1.x, angles1.y, angles1.z);
+		fflush(stdout);
+		break; 
+	     case OPTION_MODE_MONGO : 
+    		mongoc_init ();
+    		client = mongoc_client_new ("mongodb://localhost:27017/");
+    		collection = mongoc_client_get_collection (client, "test", "edison");
+		sprintf(json, "{\"_id\": \"%d\",\"temp\": \"%d\",\"pitch\": \"%0.0f\",\"roll\": \"%0.0f\",\"yaw\": \"%0.0f\"}", t, temp, angles1.x, angles1.y, angles1.z);
+		doc = bson_new_from_json((const uint8_t *)json, -1, &error);
+		if (!doc) {
+      			fprintf (stderr, "%s\n", error.message);
+      			return EXIT_FAILURE;
+   		}
+		if (!mongoc_collection_insert (collection, MONGOC_INSERT_NONE, doc, NULL, &error)) {
+        		fprintf (stderr, "%s\n", error.message);
+    		}
+    		bson_destroy (doc);
+		mongoc_collection_destroy (collection);
+    		mongoc_client_destroy (client);
+    		mongoc_cleanup ();
+		break;
+	     case OPTION_MODE_MQTT :
+  		sprintf(tmp_msg, "Pitch: %0.4f", angles1.x);
+    		pubmessage.payload = tmp_msg;
+    		pubmessage.payloadlen = strlen(tmp_msg);
+    		pubmessage.qos = MQ_QOS;
+    		pubmessage.retained = 0;
+    		MQTTClient_publishMessage(mqClient, MQ_PITCH_TOPIC, &pubmessage, &token);
+    		printf("Waiting for up to %d seconds for publication of %s\n"
+            		"on topic %s for client with ClientID: %s\n",
+            		(int)(MQ_TIMEOUT/1000), tmp_msg, MQ_PITCH_TOPIC, MQ_ID);
+    		rc = MQTTClient_waitForCompletion(mqClient, token, MQ_TIMEOUT);
+    		printf("Message with delivery token %d delivered\n", token);
+
+  		sprintf(tmp_msg, "Roll: %0.4f", angles1.y);
+    		pubmessage.payload = tmp_msg;
+    		pubmessage.payloadlen = strlen(tmp_msg);
+    		pubmessage.qos = MQ_QOS;
+    		pubmessage.retained = 0;
+    		MQTTClient_publishMessage(mqClient, MQ_ROLL_TOPIC, &pubmessage, &token);
+    		printf("Waiting for up to %d seconds for publication of %s\n"
+            		"on topic %s for client with ClientID: %s\n",
+            		(int)(MQ_TIMEOUT/1000), tmp_msg, MQ_ROLL_TOPIC, MQ_ID);
+    		rc = MQTTClient_waitForCompletion(mqClient, token, MQ_TIMEOUT);
+    		printf("Message with delivery token %d delivered\n", token);
+
+  		sprintf(tmp_msg, "Yaw: %0.4f", angles1.z);
+    		pubmessage.payload = tmp_msg;
+    		pubmessage.payloadlen = strlen(tmp_msg);
+    		pubmessage.qos = MQ_QOS;
+    		pubmessage.retained = 0;
+    		MQTTClient_publishMessage(mqClient, MQ_YAW_TOPIC, &pubmessage, &token);
+    		printf("Waiting for up to %d seconds for publication of %s\n"
+            		"on topic %s for client with ClientID: %s\n",
+            		(int)(MQ_TIMEOUT/1000), tmp_msg, MQ_YAW_TOPIC, MQ_ID);
+    		rc = MQTTClient_waitForCompletion(mqClient, token, MQ_TIMEOUT);
+    		printf("Message with delivery token %d delivered\n", token);
+
+  		sprintf(tmp_msg, "Temperature: %d", temp);
+    		pubmessage.payload = tmp_msg;
+    		pubmessage.payloadlen = strlen(tmp_msg);
+    		pubmessage.qos = MQ_QOS;
+    		pubmessage.retained = 0;
+    		MQTTClient_publishMessage(mqClient, MQ_TEMP_TOPIC, &pubmessage, &token);
+    		printf("Waiting for up to %d seconds for publication of %s\n"
+            		"on topic %s for client with ClientID: %s\n",
+            		(int)(MQ_TIMEOUT/1000), tmp_msg, MQ_TEMP_TOPIC, MQ_ID);
+    		rc = MQTTClient_waitForCompletion(mqClient, token, MQ_TIMEOUT);
+    		printf("Message with delivery token %d delivered\n", token);
+
+    		MQTTClient_disconnect(mqClient, 10000);
+    		MQTTClient_destroy(&mqClient);
+		break;
+	     case OPTION_MODE_COUCH :
+
+
+	     default :
+                printf ("temp: %4d, pitch: %4.0f, roll: %4.0f, yaw: %4.0f\n",
+                  temp, angles1.x, angles1.y, angles1.z);
+                break;
+	  }
+      }
+      angles2.x = angles1.x;
+      angles2.y = angles1.y;
+      angles2.z = angles1.z;
     }
   }
   return 0;

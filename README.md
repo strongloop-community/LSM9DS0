@@ -1,5 +1,13 @@
 ### Hacking on Sparkfun 9dof block for Edison (LSM9DS0)
 
+This fork of the original LSM9DS0 code -- thanks to the original author at https://github.com/jku/LSM9DS0 -- adds a few things. 
+
+1) The output can now be directed to the onboard mosquitto MQTT server* (with --output mqtt)
+2) An instance of MongoDB ** (with --output mongo)
+3) Adjust the frequency of readings with --sleepTime <seconds>
+
+There are hooks for couchbase, but I haven't completed those yet, named pipes (they work, but currently buffer, and I haven't fixed that yet), and json to stdout
+
 Some initial code to get data out of the Sparkfun 9 Degrees of Freedom
 Block for Intel Edison. The block contains a LSM9DS0 9DOF IMU with a
 3-axis accelerometer, a 3-axis gyroscope, and a 3-axis magnetometer.
@@ -24,3 +32,17 @@ surface during the calibration.
 `calibrate-mag`: produces calibration data for magnetometer. Device
 should be turned to every direction during the calibration.
 
+
+#### Dependencies
+
+MongoDB (--output mongo)
+In order to use --output mongo you will need to install and build the 32-bit MongoDB instance at https://fastdl.mongodb.org/linux/mongodb-linux-i686-3.2.0.tgz 
+This is a 'legacy' version of MongoDB and won't be updated. 
+
+You will also need to build and install the MongoDB C Library from https://github.com/mongodb/mongo-c-driver 
+
+Both of these build and run without modification on Linux edison 3.10.17-poky-edison+ which is what I built this on.
+
+MQTT (--output mqtt)
+In order to use --output mqtt you will need to build and install the Paho MQTT libraries from https://eclipse.org/paho/clients/c/
+Again this builds and installs without issues.
