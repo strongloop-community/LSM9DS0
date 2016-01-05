@@ -3,8 +3,11 @@
 This fork of the original LSM9DS0 code -- thanks to the original author at https://github.com/jku/LSM9DS0 -- adds a few things. 
 
 1) The output can now be directed to the onboard mosquitto MQTT server* (with --output mqtt)
+
 2) An instance of MongoDB ** (with --output mongo)
+
 3) Adjust the frequency of readings with --sleepTime <seconds>
+    
 
 There are hooks for couchbase, but I haven't completed those yet, named pipes (they work, but currently buffer, and I haven't fixed that yet), and json to stdout
 
