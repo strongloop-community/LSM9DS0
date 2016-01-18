@@ -8,12 +8,12 @@ BSON_DIR=/usr/local/include/libbson-1.0
 MONGO_DIR=/usr/local/include/libmongoc-1.0
 HEADERS = edison-9dof-i2c.h
 OBJ = edison-9dof-i2c.o
-BINS = test calibrate-mag calibrate-acc-gyro
+BINS = sensors calibrate-mag calibrate-acc-gyro
 CFLAGS=-I. -I$(BSON_DIR) -I$(MONGO_DIR) -Wall -L$(EX_LIBS)
 
 all: $(BINS)
 
-test: test.o $(OBJ)
+sensors: sensors.o $(OBJ)
 	$(CC) -g -o $@ $^ $(CFLAGS) $(LIBS) -L$(EX_LIBS)
 
 calibrate-acc-gyro: calibrate-acc-gyro.o $(OBJ)
