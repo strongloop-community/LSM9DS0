@@ -389,6 +389,29 @@ void mkfifo_at(char *dir_path, char *relative_path)
     close(dir_fd);
 }
 
+int insert_mongo(char json[200], char *coll, mongoc_client_t *client, bson_oid_t oid){
+    
+    mongoc_collection_t *collection;
+    bson_error_t error;
+    bson_t *doc;
+     
+    collection = mongoc_client_get_collection (client, "edison", coll);     
+    doc = bson_new_from_json((const uint8_t *)json, -1, &error);
+    BSON_APPEND_OID (doc, "_id", &oid);
+    if (!doc) {
+		fprintf (stderr, "%s\n", error.message);
+		return EXIT_FAILURE;
+    }
+    
+    if (!mongoc_collection_insert (collection, MONGOC_INSERT_NONE, doc, NULL, &error)) {
+		fprintf (stderr, "%s\n", error.message);
+        return EXIT_FAILURE;
+    }
+    bson_destroy (doc);
+    mongoc_collection_destroy (collection);
+    return EXIT_SUCCESS;
+}
+
 int main (int argc, char **argv)
 {
   int file;
@@ -406,11 +429,12 @@ int main (int argc, char **argv)
 
 // Mongo DB
   mongoc_client_t *client;
-  mongoc_collection_t *collection;
-  bson_error_t error;
-  bson_t *doc;
-  char json[100];
-
+  
+  char json[500];
+ mongoc_collection_t *collection;
+ bson_oid_t oid;
+ 
+ 
 //MQTT
   MQTTClient mqClient;
   MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
@@ -577,27 +601,76 @@ int main (int argc, char **argv)
 	     case OPTION_MODE_TXT :
 	        printf("%d; %d; %0.0f; %0.0f; %0.0f",  t, temp, angles1.x, angles1.y, angles1.x);
 	        fflush(stdout);
-		break;	
+		    break;	
 	     case OPTION_MODE_JSON :
                 printf("{\"time\": \"%s\",\"temp\": \"%d\",pitch\": \"%0.2f\",\"roll\": \"%0.2f\",\"yaw\": \"%0.2f\"}", date_string, temp, angles1.x, angles1.y, angles1.z);
-		fflush(stdout);
+		        fflush(stdout);
 		break; 
 	     case OPTION_MODE_MONGO : 
     		mongoc_init ();
-    		client = mongoc_client_new (server);
-    		collection = mongoc_client_get_collection (client, "edison", "sensors");
+    		client = mongoc_client_new (server);  
+            bson_error_t error;
+            bson_t *doc;
+     bson_oid_init (&oid, NULL);
             
+
+            // all sensor data          
 		    sprintf(json, "{\"time\": \"%s\",\"temp\": \"%d\",\"pitch\": \"%0.2f\",\"roll\": \"%0.2f\",\"yaw\": \"%0.2f\", \"magX\": \"%0.2f\", \"magY\": \"%0.2f\", \"magZ\": \"%0.2f\", \"accelX\" : \"%0.2f\", \"accelY\" : \"%0.2f\", \"accelZ\" : \"%0.2f\"}", date_string, temp, angles1.x, angles1.y, angles1.z, mag.x*1000, mag.y*1000, mag.z*1000, acc.x*1000, acc.y*1000, acc.z*1000 );
-		doc = bson_new_from_json((const uint8_t *)json, -1, &error);
-		if (!doc) {
-      			fprintf (stderr, "%s\n", error.message);
-      			return EXIT_FAILURE;
-   		}
-		if (!mongoc_collection_insert (collection, MONGOC_INSERT_NONE, doc, NULL, &error)) {
-        		fprintf (stderr, "%s\n", error.message);
-    		}
-    		bson_destroy (doc);
-		mongoc_collection_destroy (collection);
+            insert_mongo(json, "Sensor", client, oid);
+            
+            // Temperature
+		    sprintf(json, "{\"time\": \"%s\",\"temp\": \"%d\"}", date_string, temp );
+            insert_mongo(json, "Temperature", client, oid);
+            
+            // all Gyro
+		    sprintf(json, "{\"time\": \"%s\",\"pitch\": \"%0.2f\",\"roll\": \"%0.2f\",\"yaw\": \"%0.2f\"}", date_string,  angles1.x, angles1.y, angles1.z );
+            insert_mongo(json, "Gyroscope", client, oid);
+            
+            // pitch
+		   sprintf(json, "{\"time\": \"%s\",\"pitch\": \"%0.2f\"}", date_string, angles1.x );
+           insert_mongo(json, "Pitch", client, oid);
+            
+            // roll
+		    sprintf(json, "{\"time\": \"%s\",\"roll\": \"%0.2f\"}", date_string, angles1.y );
+            insert_mongo(json, "Roll", client, oid);
+            
+            //yaw
+		    sprintf(json, "{\"time\": \"%s\",\"yaw\": \"%0.2f\"}", date_string, angles1.z);
+            insert_mongo(json, "Yaw", client, oid);
+            
+            //All mag
+		    sprintf(json, "{\"time\": \"%s\", \"magX\": \"%0.2f\", \"magY\": \"%0.2f\", \"magZ\": \"%0.2f\"}", date_string, mag.x*1000, mag.y*1000, mag.z*1000);
+            insert_mongo(json, "Magnetometer", client, oid);
+            
+            // magX
+		    sprintf(json, "{\"time\": \"%s\", \"magX\": \"%0.2f\"}", date_string, mag.x*1000);
+            insert_mongo(json, "Magnetometer-X", client, oid);
+            
+            // magY
+		    sprintf(json, "{\"time\": \"%s\",\"magY\": \"%0.2f\"}", date_string,  mag.y*1000);
+            insert_mongo(json, "Magnetometer-Y", client, oid);
+            
+            // MagZ
+		    sprintf(json, "{\"time\": \"%s\", \"magZ\": \"%0.2f\"}", date_string,  mag.z*1000 );
+            insert_mongo(json, "Magnetometer-Z", client, oid);
+            
+            // All Accelerometer
+		    sprintf(json, "{\"time\": \"%s\", \"accelX\" : \"%0.2f\", \"accelY\" : \"%0.2f\", \"accelZ\" : \"%0.2f\"}", date_string, acc.x*1000, acc.y*1000, acc.z*1000 );
+            insert_mongo(json, "Accelerometer", client, oid);
+            
+            // accelX
+		   sprintf(json, "{\"time\": \"%s\", \"accelX\" : \"%0.2f\"}", date_string, acc.x*1000 );
+           insert_mongo(json, "Accelerometer-X", client, oid);
+            
+            // accelY
+		    sprintf(json, "{\"time\": \"%s\", \"accelY\" : \"%0.2f\"}", date_string, acc.y*1000 );
+            insert_mongo(json, "Accelerometer-Y", client, oid);
+            
+            // accelZ
+		    sprintf(json, "{\"time\": \"%s\", \"accelZ\" : \"%0.2f\"}", date_string, acc.z*1000 );
+            insert_mongo(json, "Accelerometer-Z", client, oid);
+            
+           
     		mongoc_client_destroy (client);
     		mongoc_cleanup ();
 		break;
