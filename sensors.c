@@ -13,6 +13,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 #include <bson.h>
 #include <mongoc.h>
 #include <MQTTClient.h>
@@ -389,7 +395,31 @@ void mkfifo_at(char *dir_path, char *relative_path)
     close(dir_fd);
 }
 
-int insert_mongo(char json[200], char *coll, mongoc_client_t *client, bson_oid_t oid){
+char * get_addr(){
+    {
+     int fd;
+     struct ifreq ifr;
+     char *addr;
+     fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+     /* I want to get an IPv4 IP address */
+     ifr.ifr_addr.sa_family = AF_INET;
+
+     /* I want IP address attached to "eth0" */
+     strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
+
+     ioctl(fd, SIOCGIFADDR, &ifr);
+
+     close(fd);
+
+     addr = malloc(100);
+     /* display result */
+     sprintf(addr, "%s", inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr));
+
+     return addr;
+    }
+}
+int insert_mongo(char json[550], char *coll, mongoc_client_t *client, bson_oid_t oid){
     
     mongoc_collection_t *collection;
     bson_error_t error;
@@ -426,15 +456,16 @@ int main (int argc, char **argv)
   char server[100];
   char db_host[50];
   char date_string [50];
+  char my_addr[50];
 
 // Mongo DB
   mongoc_client_t *client;
   
-  char json[500];
- mongoc_collection_t *collection;
+  char json[550];
  bson_oid_t oid;
  
- 
+ sprintf(my_addr, "%s", get_addr());
+ printf("Host Address: %s\n", my_addr);
 //MQTT
   MQTTClient mqClient;
   MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
@@ -574,7 +605,7 @@ int main (int argc, char **argv)
     time_t t = time(NULL);
     struct tm* tm_info;
     tm_info = localtime(&t);
-    strftime(date_string, 26, "%d %m %Y %H:%M:%S", tm_info);
+    strftime(date_string, 26, "%m/%d/%Y %H:%M:%S", tm_info);
     read_gyro (file, g_bias, GYRO_SCALE_245DPS, &gyro);
     read_mag (file, m_bias, m_scale, MAG_SCALE_2GS, &mag);
     read_acc (file, a_bias, ACCEL_SCALE_2G, &acc);
@@ -609,8 +640,6 @@ int main (int argc, char **argv)
 	     case OPTION_MODE_MONGO : 
     		mongoc_init ();
     		client = mongoc_client_new (server);  
-            bson_error_t error;
-            bson_t *doc;
      bson_oid_init (&oid, NULL);
             
 
@@ -651,7 +680,7 @@ int main (int argc, char **argv)
             insert_mongo(json, "Magnetometer-Y", client, oid);
             
             // MagZ
-		    sprintf(json, "{\"time\": \"%s\", \"magZ\": \"%0.2f\"}", date_string,  mag.z*1000 );
+		    sprintf(json, "{,\"time\": \"%s\", \"magZ\": \"%0.2f\"}", date_string,  mag.z*1000 );
             insert_mongo(json, "Magnetometer-Z", client, oid);
             
             // All Accelerometer
@@ -667,7 +696,7 @@ int main (int argc, char **argv)
             insert_mongo(json, "Accelerometer-Y", client, oid);
             
             // accelZ
-		    sprintf(json, "{\"time\": \"%s\", \"accelZ\" : \"%0.2f\"}", date_string, acc.z*1000 );
+		    sprintf(json, "{,\"time\": \"%s\", \"accelZ\" : \"%0.2f\"}", date_string, acc.z*1000 );
             insert_mongo(json, "Accelerometer-Z", client, oid);
             
            
