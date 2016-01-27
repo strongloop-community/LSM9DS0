@@ -452,7 +452,7 @@ int main (int argc, char **argv)
   int opt, option_index, help = 0, option_dump = 0;
   OptionMode option_mode = OPTION_MODE_ANGLES;
   float declination = 0.0;
-  int sleep_time = 10000;
+  int sleep_time = 1500;
   char server[100];
   char db_host[50];
   char date_string [50];
@@ -680,7 +680,7 @@ int main (int argc, char **argv)
             insert_mongo(json, "Magnetometer-Y", client, oid);
             
             // MagZ
-		    sprintf(json, "{,\"time\": \"%s\", \"magZ\": \"%0.2f\"}", date_string,  mag.z*1000 );
+		    sprintf(json, "{\"time\": \"%s\", \"magZ\": \"%0.2f\"}", date_string,  mag.z*1000 );
             insert_mongo(json, "Magnetometer-Z", client, oid);
             
             // All Accelerometer
@@ -696,7 +696,7 @@ int main (int argc, char **argv)
             insert_mongo(json, "Accelerometer-Y", client, oid);
             
             // accelZ
-		    sprintf(json, "{,\"time\": \"%s\", \"accelZ\" : \"%0.2f\"}", date_string, acc.z*1000 );
+		    sprintf(json, "{\"time\": \"%s\", \"accelZ\" : \"%0.2f\"}", date_string, acc.z*1000 );
             insert_mongo(json, "Accelerometer-Z", client, oid);
             
            
