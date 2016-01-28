@@ -38,6 +38,8 @@ should be turned to every direction during the calibration.
 
 #### Dependencies
 
+A note about the dependencies: Right now, there are no flags for the Makefile to include one, or a few, of these libraries, so in order to build the project, you must install them all. I'll fix that.
+
 MongoDB (--output mongo)
 In order to use --output mongo you will need to install and build the 32-bit MongoDB instance at https://fastdl.mongodb.org/linux/mongodb-linux-i686-3.2.0.tgz 
 This is a 'legacy' version of MongoDB and won't be updated. 
@@ -49,3 +51,20 @@ Both of these build and run without modification on Linux edison 3.10.17-poky-ed
 MQTT (--output mqtt)
 In order to use --output mqtt you will need to build and install the Paho MQTT libraries from https://eclipse.org/paho/clients/c/
 Again this builds and installs without issues.
+
+Couchbase (--output couch)
+Build and install the Couchbase C Library from  https://github.com/couchbase/libcouchbase.git This is not as straighforward as you might think. There are a couple of modifications required:
+
+cd libcouchbase
+sed -i '/RealBin/s/^/#/' configure.pl
+sed -i '/RealBin/s/^/#/' cmake/configure
+sed -i "166i my \$srcdir =\"/home/root/libcouchbase/\";" configure.pl
+sed -i "166i my \$srcdir =\"/home/root/libcouchbase/\";" cmake/configure
+
+Will fix it up for you so that you can then 
+
+mkdir build
+cd build 
+../cmake/configure --disable-plugins
+make
+make install
