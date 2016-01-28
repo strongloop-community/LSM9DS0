@@ -54,17 +54,18 @@ Again this builds and installs without issues.
 
 Couchbase (--output couch)
 Build and install the Couchbase C Library from  https://github.com/couchbase/libcouchbase.git This is not as straighforward as you might think. There are a couple of modifications required:
-
+<pre>
 cd libcouchbase
 sed -i '/RealBin/s/^/#/' configure.pl
 sed -i '/RealBin/s/^/#/' cmake/configure
 sed -i "166i my \$srcdir =\"/home/root/libcouchbase/\";" configure.pl
 sed -i "166i my \$srcdir =\"/home/root/libcouchbase/\";" cmake/configure
-
+</pre>
 Will fix it up for you so that you can then 
-
+<pre>
 mkdir build
 cd build 
 ../cmake/configure --disable-plugins
 make
 make install
+<pre>
