@@ -455,7 +455,7 @@ void POST_message(char *server, char json[550], char *collection){
         /* fill in the parameters */
         sprintf(message, format, collection, strlen(json), json);
        // DEBUG: 
-       printf("Request:\n%s\n",message);
+       //printf("Request:\n%s\n",message);
 
         /* create the socket */
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
