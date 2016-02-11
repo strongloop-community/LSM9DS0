@@ -501,7 +501,7 @@ int main (int argc, char **argv)
   int opt, option_index, help = 0, option_dump = 0;
   OptionMode option_mode = OPTION_MODE_ANGLES;
   float declination = 0.0;
-  int sleep_time = 1500;
+  int sleep_time = 200;
   char server[100];
   char db_host[50];
   char date_string [50];
